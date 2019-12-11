@@ -7,8 +7,9 @@ Models two different indexing perspectives in both of which each ES doc represen
 2. *extended* : extends baseline document by including additional information for each triple component (if it is a resource - URI). Additional information corresponds to values of properties that can be given as input (e.g. *rdfs:comment*).
 
 RDF files are expected in the form of triples (.ttl) in the following structure:
-rdf_dataset
+
 ```
+rdf_dataset
 ├── part1
 │   ├── file1.ttl
 │   ├── file2.ttl

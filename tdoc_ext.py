@@ -9,7 +9,8 @@ from timeit import default_timer as timer
 import el_controller
 
 
-def init_ext_properties(pfile):
+# initialize input properties file (pfile)
+def init_prop_file(pfile):
     if not os.path.isfile(pfile):
         print('Error, ' + '\'' + pfile + '\'' + ' is not proper properties file')
         sys.exit(-1)
@@ -33,30 +34,6 @@ def init_ext_properties(pfile):
     return properties_map
 
 
-# # setting up arguments parser
-parser = argparse.ArgumentParser(description='\'Indexer for generating the extended index\'')
-parser.add_argument('-rdfD', help='"specify as ARG the directory of RDF data input(.ttl files)', required=True)
-parser.add_argument('-pindex', help='specify the name of the properties index', required=True)
-parser.add_argument('-eindex', help='specify the name of the new extended index', required=True)
-parser.add_argument('-pfile', help='specify including properties file', required=True)
-parser.add_argument('-o', help='include object\'s properties? (0 : false, 1 : true)', required=True)
-
-args = vars(parser.parse_args())
-rdf_folder = args['rdfD']
-prop_index = args['pindex']
-ext_index = args['eindex']
-obj_incl = int(args['o'])
-properties_map = init_ext_properties(args['pfile'])
-
-# known namespaces - resources
-name_spaces = []
-name_spaces.append("http://dbpedia.org/resource")
-
-# initialize elastic - expects a localhost binding in port 9200
-el_controller.init('localhost', 9200)
-bulk_size = 3500
-
-####################################################
 def get_name_space(triple_part, pre_flag):
     if pre_flag:
         n_space = triple_part.rsplit('#', 1)[0]
@@ -67,10 +44,7 @@ def get_name_space(triple_part, pre_flag):
 
 
 def is_resource(full_uri):
-    for nspace in name_spaces:
-        if full_uri == nspace:
-            return True
-    return False
+    return full_uri in name_spaces
 
 
 def get_property(entity):
@@ -87,12 +61,12 @@ def get_property(entity):
             }
         }
 
-####################################################
-def parse_rdf_folder(rdf_folder):
-    iter = 0
-    iters_took = 0
-    bulk_actions = []
 
+def parse_rdf_folder(rdf_folder):
+    bulk_actions = []
+    bulk_size = 3500
+
+    iter = 0
     print("--" + rdf_folder + ": started")
 
     for ttl_file in glob.glob(rdf_folder + '/*.ttl'):
@@ -137,17 +111,11 @@ def parse_rdf_folder(rdf_folder):
                     obj_keywords = contents[2].rsplit('#', 1)[-1].replace(":", "")[:-2]
 
                 # create elastic triple-doc
-                doc = {}
-                doc["subjectKeywords"] = sub_keywords
-                doc["predicateKeywords"] = pred_keywords
-                doc["objectKeywords"] = obj_keywords
-                doc["subjectNspaceKeys"] = sub_nspace
-                doc["predicateNspaceKeys"] = pred_nspace
-                doc["objectNspaceKeys"] = obj_nspace
+                doc = {"subjectKeywords": sub_keywords, "predicateKeywords": pred_keywords,
+                       "objectKeywords": obj_keywords, "subjectNspaceKeys": sub_nspace,
+                       "predicateNspaceKeys": pred_nspace, "objectNspaceKeys": obj_nspace}
 
-                ###### get all properties described in pfile ######
-                # retrieve all subject's properties
-
+                # retrieve all subject's properties (described in pfile)
                 for prop_name in properties_map.keys():
 
                     if prop_maps.__contains__(sub_keywords):
@@ -162,7 +130,7 @@ def parse_rdf_folder(rdf_folder):
 
                         prop_maps[sub_keywords] = doc[prop_name + "_sub"]
 
-                # retrieve all object's properties (if -o is 1)
+                # retrieve all object's properties (described in pfile) if -o : 1
                 if obj_incl == 1 and is_resource(obj_nspace):
 
                     for prop_name in properties_map.keys():
@@ -178,8 +146,6 @@ def parse_rdf_folder(rdf_folder):
                                 doc[prop_name + "_obj"].append(" " + prop_hit["_source"][prop_name])
 
                             prop_maps[obj_keywords] = doc[prop_name + "_obj"]
-
-                ############
 
                 # add insert action
                 action = {
@@ -203,19 +169,52 @@ def parse_rdf_folder(rdf_folder):
     el_controller.bulk_action(bulk_actions)
 
     print("--" + rdf_folder + ": finished")
+
+
 ####################################################
 
 
-#
-ttlfolders = []
-for ttl_folder in os.listdir(rdf_folder):
-    ttl_folder = rdf_folder + "/" + ttl_folder
-    if os.path.isdir(ttl_folder):
-        ttlfolders += [os.path.join(ttl_folder, f) for f in os.listdir(ttl_folder)]
+# known namespaces - resources (manually maintained)
+name_spaces = set()
+name_spaces.add("http://dbpedia.org/resource")
 
-start = timer()
-p = multiprocessing.Pool(8)
-p.map(parse_rdf_folder, ttlfolders)
+def main():
+    # setting up arguments parser
+    parser = argparse.ArgumentParser(description='\'Indexer for generating the extended index\'')
+    parser.add_argument('-rdfD', help='"specify as ARG the directory of RDF data input(.ttl files)', required=True)
+    parser.add_argument('-pindex', help='specify the name of the properties index', required=True)
+    parser.add_argument('-eindex', help='specify the name of the new extended index', required=True)
+    parser.add_argument('-pfile', help='specify including properties file', required=True)
+    parser.add_argument('-o', help='include object\'s properties? (0 : false, 1 : true)', required=True)
 
-end = timer()
-print("elapsed time: ", (end - start))
+    args = vars(parser.parse_args())
+    rdf_folder = args['rdfD']
+    global prop_index
+    global ext_index
+    global obj_incl
+    global properties_map
+    prop_index = args['pindex']
+    ext_index = args['eindex']
+    obj_incl = int(args['o'])
+    properties_map = init_prop_file(args['pfile'])
+
+    # initialize elastic - expects a localhost binding in port 9200
+    el_controller.init('localhost', 9200)
+
+    #
+    ttlfolders = []
+    for ttl_folder in os.listdir(rdf_folder):
+        ttl_folder = rdf_folder + "/" + ttl_folder
+        if os.path.isdir(ttl_folder):
+            ttlfolders += [os.path.join(ttl_folder, f) for f in os.listdir(ttl_folder)]
+
+    start = timer()
+    p = multiprocessing.Pool(8)
+    p.map(parse_rdf_folder, ttlfolders)
+
+    end = timer()
+    print("elapsed time: ", (end - start))
+
+
+if __name__ == "__main__":
+    main()
